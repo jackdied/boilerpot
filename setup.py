@@ -6,10 +6,15 @@ try:
 except ImportError:
     from distutils.core import setup
 
+try:
+    long_desc = open(os.path.join(os.path.dirname(__file__), 'README.md')).read()
+except IOError:
+    long_desc = ''
+
 setup(name="boilerpot",
       version="0.91",
       description="HTML content extraction",
-      long_description=open(os.path.join(os.path.dirname(__file__), 'README.md')).read(),
+      long_description=long_desc,
       author="Jack Diederich",
       author_email="jackdied@gmail.com",
       url="http://github.com/jackdied/boilerpot",

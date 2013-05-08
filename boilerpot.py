@@ -18,26 +18,17 @@
  limitations under the License.
 """
 
-__version__ = '0.9'
+__version__ = '0.91'
 
 import re
 try:
     from bs4 import BeautifulSoup as BS, Tag, Comment
+    bs_version = 4
 except ImportError:
     from BeautifulSoup import BeautifulSoup as BS, Tag, Comment
-try:
-    from hivelib.utils import translate_quotes
-except ImportError:
-    def translate_quotes(txt):
-        """ turn microsoft quotes into plain quotes """
-        # double quotes
-        txt = txt.replace(u"\u201c", '"')
-        txt = txt.replace(u"\u201d", '"')
-        # signle quotes
-        txt = txt.replace(u"\u2018", "'")
-        txt = txt.replace(u"\u2019", "'")
-        txt = txt.replace(u"\u02BC", "'")
-        return txt
+    bs_version = 3
+
+import cleaners
 
 actions = {}
 actions['a'] = 'anchor'
@@ -80,7 +71,7 @@ def wc(text):
 
 class Text(object):
     def __init__(self, text='', depth=0, ignore=0, tags=[], ids=[]):
-        self.text = text
+        self.text = cleaners.clean_html(text)
         self.depth = depth
         self.ignore = ignore
         self.tags = tags
@@ -133,8 +124,9 @@ class ParseState(object):
 
 
     def flush(self, *labels):
-        if self.curr_text.strip():
-            self.parts.append(Text(self.curr_text.strip(), len(self.tags) + 1, self.ignore_depth, self.tags[:], self.curr_ids[:]))
+        curr = self.curr_text.strip()
+        if curr:
+            self.parts.append(Text(self.curr_text, len(self.tags) + 1, self.ignore_depth, self.tags[:], self.curr_ids[:]))
             self.parts[-1].labels |= set(labels)
             log(self.parts[-1])
         self.curr_text = u''
@@ -173,6 +165,9 @@ class ParseState(object):
 
     def characters(self, text):
         log('%s   TEXT %r' % ('  ' * len(self.tags), text))
+        if text.strip().startswith('html PUBLIC'):  # hell no
+            self.curr_text = u''
+            return
         if self.tags[-1] in {'b', 'em', 'i', 'strong'}:
             if wc(text) > 5:
                 self.flush()
@@ -201,8 +196,8 @@ class ParseState(object):
         elif action == 'paragraph':
             self.flush('maybe_content', 'maybe_content_paragraph')
         elif action == 'title':
-            self.title = title_cleaner(self.curr_text.strip())
             self.flush('title')
+            self.title = title_cleaner(self.parts[-1].text)
         else:
             self.flush()
         assert name == self.tags.pop()
@@ -221,8 +216,16 @@ def descend(node, state):
             state.characters(unicode(child))
     state.tag_end(node.name.lower())
 
+def soup(html):
+    if bs_version == 3:
+        return BS(html, convertEntities='html')
+    else:
+        return BS(html)
+
 def parse_html(html):
-    bs = BS(html)
+    html = cleaners.translate_microsoft(html)
+    html = cleaners.translate_nurses(html)
+    bs = soup(html)
     state = ParseState()
     descend(bs, state)
     return state
@@ -384,6 +387,19 @@ def ignore_after_content(blocks, minwords=60):
         block.labels.add('ignore_after_content')
     return
 
+def ignore_comments(blocks):
+    """ lone text pieces seen in the wild
+          u'Sign in'
+          u'Forgot your password?'
+          u'Create AccountSign In'  #youtube
+    """
+    for block in blocks:
+        if block.text.lower().startswith((u'sign in', u'Forgot your password?',
+                                          u'Create AccountSign In', u'You are using an outdated browser')):
+            block.labels.add('ignore')
+            block.labels.add('ignore_ignore_comments')
+    return
+
 def content_marker(blocks):
     for prev, curr, next in zip([Text()] + blocks, blocks, blocks[1:] + [Text()]):
         log("\nCM %r\n" % [((curr.link_density, curr.wordcount), (prev.link_density, prev.wordcount), (next.link_density, next.wordcount), curr.text)])
@@ -421,8 +437,7 @@ def terminating_blocks(blocks):
     return
 
 def title_cleaner(title):
-    title = translate_quotes(title)
-    splitter = "\s*[\xbb|,:()-\xa0]+\s*"
+    splitter = "\s*[\xbb|,:()\-\xa0]+\s*"
     best = sorted(re.split(splitter, title), key=len)[-1]  # longest
     best = best.replace("'", "", 1)
     return best
@@ -459,58 +474,69 @@ def article_filter(html):
     page.good = [block for block in blocks if block.is_content]
     return page
 
+def clean_body(body, title):
+    body = body.strip()
+    if body and title:
+        newbody = cleaners.strip_words(body, title)
+        if newbody != body:
+            body = cleaners.strip_partial_sentence(body)
+    if body:
+        newbody = cleaners.strip_timestamp(body)
+        if newbody != body:
+            body = cleaners.strip_partial_sentence(newbody)
+
+    return body
+
 def meat(html):
     page = article_filter(html)
-    for p in page.good:
+    blocks = sorted(page.good, key=lambda x:x.wordcount, reverse=True)
+    title = page.title
+    for p in blocks:
         if 'likely_content' in p.labels:
-            return page.title, p.text
-    for p in page.good:
-        if 'maybe_content' in p.labels:
-            return page.title, p.text
+            best = p.text
+            break
+    else:
+        for p in page.good:
+            if 'maybe_content' in p.labels:
+                best = p.text
+                break
+        else:
+            return title, u''
+    best = clean_body(best, title)
+    return title, best
 
 def meat2(html):
     page = simple_filter(html)
-    blocks = page.good
-    blocks.sort(key=lambda x:x.wordcount)
-    return page.title, blocks[-1].text
+    title = page.title
+    blocks = sorted(page.good, key=lambda x:x.wordcount)
+    if not blocks:
+        return title, u''
+    best = blocks[-1].text
+    best = clean_body(best, title)
+    return title, best
 
-if __name__ == '__main__':
-    import hf
-    for a in hf.Article.approval_articles.filter(unapproved=True).order_by('-pub_date'):
-        print '\n\tARTICLE\n'
-        print a.id, repr(a.title)
-        print meat(a.article_text.html)
-        print meat2(a.article_text.html)
+def extract_text(html):
+    """ take the HTML and attempt to return plain text (minus headers/footers/navigation/etc) """
+    for func in [meat, meat2]:
+        title, body = func(html)
+        if title and body:
+            return title, body
+    return '', ''
 
-'''
+x = u'''
 make a rule to mark these down.
 INDIANAPOLIS (WISH) - The Clearwater area
-
-remove starts similar to title: u'Why an Atlanta upstart is buying NYSE'
-&#10;&#10;&#10;Why an Atlanta upstart is buying NYSE&#160;
 
 This page is problematic, the interstitial headers mess things up.
 http://news.pba.com/post/2012/12/20/PBA-Spare-Shots-Barnes-Home-for-Holidays-After-Successful-Gall-Bladder-Removal-Surgery.aspx
 
-unicode cleanup
-u'When Life Gives You Lemons\u2026 Go Bowling?'
-u'\u2018Don\u2019t worry about it.\u2019 NASA debunks science behind 2012 Mayan doomsday'
-\u201cTaboo\u201d
-
-dates at start
-u"Published Thursday, Dec. 20, 2012 7:00AM EST With the so-called Mayan"
-
-PRWEB
-u'Garden City, NY (PRWEB) December 18, 2012'
-
 use NER or nltk to find what are real sentances (noun verb noun)
 
-lone text pieces:
-  u'Sign in'
-  u'Forgot your password?'
-  u'Create AccountSign In'  #youtube
+* titles are coming out lowercase
 
-W3C//DTD, html tag.  NOOOOOOO.
-
-translate \r\n and \r
+Why didn't this trim?
+(u'Lets Go Bowling!! ', u"Let's Go Bowling!! \n Tis' the Season to be&nbsp;jolly&nbsp;as the 2012 NCAA")
 '''
+
+if __name__ == '__main__':
+    print extract_text(open('sample.html').read())

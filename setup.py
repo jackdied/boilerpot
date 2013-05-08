@@ -1,18 +1,23 @@
 #!/usr/bin/env python
-#from distutils.core import setup
-from setuptools import setup, find_packages
+import os
+
+try:
+    from setuptools import setup
+except ImportError:
+    from distutils.core import setup
 
 setup(name="boilerpot",
-      version="0.9",
+      version="0.91",
       description="HTML content extraction",
+      long_description=open(os.path.join(os.path.dirname(__file__), 'README.md')).read(),
       author="Jack Diederich",
       author_email="jackdied@gmail.com",
       url="http://github.com/jackdied/boilerpot",
-      packages = find_packages(),
+      packages = ['boilerpot'],
       license = "Apache License",
       keywords="html, scraping, templating",
       zip_safe = True,
-      py_modules=['boilerpot'],
+      py_modules=[],
       classifiers=[
         'Intended Audience :: Developers',
         'Intended Audience :: System Administrators',

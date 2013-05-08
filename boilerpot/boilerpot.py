@@ -28,7 +28,7 @@ except ImportError:
     from BeautifulSoup import BeautifulSoup as BS, Tag, Comment
     bs_version = 3
 
-import cleaners
+from . import cleaners
 
 actions = {}
 actions['a'] = 'anchor'

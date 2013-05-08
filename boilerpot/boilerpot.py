@@ -18,7 +18,7 @@
  limitations under the License.
 """
 
-__version__ = '0.91'
+__version__ = '0.92'
 
 import re
 try:
@@ -515,8 +515,31 @@ def meat2(html):
     best = clean_body(best, title)
     return title, best
 
+def decode_data(data, headers={}):
+    try:
+        import magic, gzip, StringIO
+        if magic.from_buffer(data).startswith('gzip'):
+            data = gzip.GzipFile(fileobj=StringIO.StringIO(data)).read()
+            if 'content-encoding' in headers:
+                headers['content-encoding'] = headers['content-encoding'].replace('gzip', '')
+    except ImportError:
+        pass
+    for encoding in ['utf-8', 'latin1']:
+        try:
+            return data.decode(encoding)
+        except UnicodeError:
+            pass
+    # the feedparser version is veeery slow, try it last.
+    try:
+        import feedparser
+        return feedparser.convert_to_utf8(headers, data)
+    except ImportError:
+        pass
+    return data.decode(encoding, 'ignore')
+
 def extract_text(html):
     """ take the HTML and attempt to return plain text (minus headers/footers/navigation/etc) """
+    html = decode_data(html)
     for func in [meat, meat2]:
         title, body = func(html)
         if title and body:

@@ -12,7 +12,7 @@ except IOError:
     long_desc = ''
 
 setup(name="boilerpot",
-      version="0.91",
+      version="0.92",
       description="HTML content extraction",
       long_description=long_desc,
       author="Jack Diederich",

@@ -8,4 +8,4 @@ build: clean
 install: clean
 	python setup.py install
 pypi: clean
-	python setup.py dist upload
+	python setup.py sdist upload
